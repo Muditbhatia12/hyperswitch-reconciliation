@@ -281,10 +281,11 @@ pub async fn update_ingestion_config(
 pub async fn find_ingestion_history_with_config_by_id(
     state: &AppState,
     id: &str,
+    auth_profile_id: &str,
 ) -> IngestionResponse<IngestionHistoryResponse> {
     let data = state
         .store
-        .find_config_and_history_by_id(id)
+        .find_config_and_history_by_id_and_profile(id, auth_profile_id)
         .await
         .to_not_found_response(|| IngestionError::IngestionHistoryNotFound {
             history_id: id.to_owned(),
@@ -339,7 +340,12 @@ pub async fn trigger_ingestion(
 
     let context = ingestion_config
         .config
-        .create_context_from_webhook(raw_payload, headers.clone(), &merchant_encryptor)
+        .create_context_from_webhook(
+            raw_payload,
+            headers.clone(),
+            state.config.auth.get_inner().internal_api_key.clone(),
+            &merchant_encryptor,
+        )
         .await
         .change_context(IngestionError::InternalServerError)?;
 

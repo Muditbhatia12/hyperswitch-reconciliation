@@ -17,6 +17,10 @@ use crate::{
     routes::AppState,
 };
 
+pub mod auth_headers {
+    pub const X_INTERNAL_API_KEY: &str = "x-internal-api-key";
+}
+
 #[derive(Debug, Serialize, Deserialize)]
 pub struct Claims {
     pub user_id: String,
@@ -83,6 +87,30 @@ impl AuthValidator for AdminApiAuth {
     }
 }
 
+#[derive(Debug, Default)]
+pub struct InternalApiKeyAuth;
+
+impl AuthValidator for InternalApiKeyAuth {
+    type AuthData = ();
+
+    async fn validate(
+        &self,
+        req: &HttpRequest,
+        state: AppState,
+    ) -> Result<Self::AuthData, ReconAppError> {
+        let request_internal_api_key =
+            get_internal_api_key(req.headers()).change_context(ReconAppError::Unauthorized)?;
+        let internal_api_key = &state.config.auth.get_inner().internal_api_key;
+
+        if request_internal_api_key != internal_api_key.peek() {
+            Err(report!(ReconAppError::Unauthorized)
+                .attach_printable("Internal API key auth failure"))?;
+        }
+
+        Ok(())
+    }
+}
+
 /// Configurable JWT authentication validator
 pub struct JwtAuth {
     merchant_id: Option<MerchantId>,
@@ -124,6 +152,15 @@ impl JwtAuth {
             merchant_id: None,
             profile_id: Some(profile_id),
             permission: None,
+        }
+    }
+
+    /// Create JWT auth that validates profile_id matches the provided value and checks the permission
+    pub fn with_profile(profile_id: String, permission: Permission) -> Self {
+        Self {
+            merchant_id: None,
+            profile_id: Some(profile_id),
+            permission: Some(permission),
         }
     }
 }
@@ -214,6 +251,11 @@ pub fn extract_api_key_from_header(req: &HttpRequest) -> Option<String> {
 
 pub fn get_api_key(headers: &HeaderMap) -> Result<&str, ReconAppError> {
     get_header_value_by_key("api-key".into(), headers)?.get_required_value("api_key")
+}
+
+pub fn get_internal_api_key(headers: &HeaderMap) -> Result<&str, ReconAppError> {
+    get_header_value_by_key(auth_headers::X_INTERNAL_API_KEY.into(), headers)?
+        .get_required_value("x-internal-api-key")
 }
 
 pub fn get_header_value_by_key(

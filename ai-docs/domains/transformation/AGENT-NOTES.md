@@ -7,7 +7,10 @@ Transformation bridges ingestion and reconciliation by converting external file 
 
 ### Authentication Pattern
 <!-- AI-UPDATED: 2025-11-14 - V1 transformation configs removed -->
-- **Execute operations**: NoAuth - system-level automation (changed from AdminApiAuth)
+<!-- AI-UPDATED: 2026-10-05 - Execute uses InternalApiKeyAuth -->
+- **Execute**: `InternalApiKeyAuth` (`x-internal-api-key`). Loopback caller from ingestion (`notify_transformation_service`). Never downgrade to `NoAuth`.
+- **WHY**: `NoAuth` let anyone who knew an `ingestion_id` write staging entries into another tenant's ledger. See `ai-docs/security/INTERNAL-API-KEY-AUTH-PLAN.md`
+- **Gotcha**: a key mismatch makes ingestion report success while no transformation runs; it only shows up as an `error!` log `"Failed to trigger transformation ... HTTP 401"` from `notify_transformation_service`
 - **V2 CRUD operations**: JWT Bearer for both creation and reads (merchant_id/profile_id from auth context)
 - **WHY**: V2 uses JWT for tenant isolation and user context
 - **CRITICAL**: V2 endpoint `/transformations/v2/configs` requires Bearer token, not API key
@@ -104,8 +107,8 @@ Pending → Processing → Processed | Failed
 
 ## Design Decisions
 
-### Why Administrative Authentication for Execute?
-Transformation execution is system automation triggered by ingestion pipeline, not user-initiated operations. CRUD operations use JWT for profile isolation.
+### Why a Dedicated Internal Key for Execute?
+Transformation execution is system automation triggered by the ingestion pipeline, not user-initiated. It uses its own key instead of `AdminApiAuth` so a leak cannot create merchants or run recon, and so it can be rotated without breaking operators. CRUD operations use JWT for profile isolation.
 
 ### Why Parallel Config Processing?
 Single ingestion can feed multiple accounts/transformations simultaneously. Each config processes the same file data for different business contexts.
@@ -499,3 +502,21 @@ The pipeline is **per-row**, not per-collection. `DefaultTransformationEngine::t
 - **`exposed_keys()` returns FIELD NAMES, not identifiers**: `MetadataSchemaData::exposed_keys()` → `ExposedKeys { exposed, searchable }` (in `common_types/src/metadata_schema.rs`) is used ONLY by the sites that DON'T go through `validate_row` and must re-derive subsets from already-stored/raw metadata — the two `core/staging_entry.rs` sites (`update_staging_entry` (**edit**) and the un-validated `create_staging_entry`) plus the recon engine's `build_search_entry_keys` (see reconciliation notes). It deliberately returns field names to match the metadata key convention; `project_metadata(metadata, keys)` filters a JSON object to those keys. **`project_metadata` now lives in `recon/src/utils/metadata_schema.rs`** (moved out of `common_types`; `exposed_keys()`/`ExposedKeys` stay in `common_types`).
 - **Staging side**: `staging_entry` gained two **unencrypted** JSONB columns `exposed_metadata` + `searchable_metadata` (NOT NULL default `'{}'`). `domain/transformation.rs` just carries the already-computed subsets from `EntryData` through `TransformationStagingEntryData` into `StagingEntryNew` (full `metadata` is still batch-encrypted; subsets ride alongside as plain JSON). All three create paths populate the subsets: `create_staging_entry_with_validation` reads them off the validated entry; both the **edit** path (`update_staging_entry`) and the un-validated `create_staging_entry` re-derive via `exposed_keys()` + `project_metadata` after resolving the `transformation_id`'s config → schema — `create_staging_entry` falls back to empty `{}` only when that config/schema lookup fails.
 - **Gotcha**: `exposed_metadata`/`searchable_metadata` are plain `serde_json::Value` (JSONB), never wrapped in `Encryption`. Only `metadata` is encrypted.
+
+<!-- AI-UPDATED: 2026-09-21 - Cross-tenant IDOR fix on GET /transformations/history/{id} -->
+## Transformation History Point Lookups Are Profile-Scoped
+
+- **Profile scoping lives in the query, not the handler**: `find_config_and_history_by_id_and_profile`
+  filters on both `dsl::id` and `dsl::profile_id`
+  - There is deliberately **no** unscoped `find_config_and_history_by_id` variant left — both callers
+    (`find_transformation_history_with_config_by_id` and `download_transformation_report`) now go
+    through the scoped method, so omitting the profile is a compile error, not a disclosure
+  - `download_transformation_report`'s post-fetch `view.history.profile_id != auth_profile_id` check
+    was removed as redundant once the predicate moved into SQL — do not re-add it
+  - `JwtAuth::basic(Permission::…)` is class-level only; it never sees the `{id}`, so it cannot be
+    relied on for object-level authorization
+  - Wrong profile → same `TransformationHistoryNotFound` 404 as a missing row, never 403 (a 403 turns
+    the endpoint into an oracle for enumerating other tenants' record IDs)
+- **The query must distinguish `DieselError::NotFound`**: it previously mapped *every* diesel error to
+  `DatabaseError::Others`, so `to_not_found_response` could never fire and a missing id returned **500**
+  from both handlers. It now matches on `NotFound` → `DatabaseError::NotFound` so the 404 is reachable.

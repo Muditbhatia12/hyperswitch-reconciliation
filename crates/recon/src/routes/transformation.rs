@@ -19,7 +19,7 @@ use crate::{
     routes::AppState,
     services::{
         api,
-        auth::{JwtAuth, NoAuth},
+        auth::{InternalApiKeyAuth, JwtAuth},
     },
 };
 
@@ -34,12 +34,14 @@ use crate::{
     request_body = TransformationTriggerRequest,
     responses(
         (status = 200, description = "Transformation executed successfully"),
+        (status = 401, description = "Missing or invalid internal API key"),
         (status = 404, description = "Ingestion or transformation config not found"),
         (status = 422, description = "Transformation failed"),
         (status = 500, description = "Internal server error")
     ),
     tag = "Transformations",
-    operation_id = "Execute Transformation"
+    operation_id = "Execute Transformation",
+    security(("InternalApiKey" = []))
 )]
 pub async fn execute_transformation(
     state: web::Data<AppState>,
@@ -50,15 +52,20 @@ pub async fn execute_transformation(
     let (ingestion_id, ingestion_history_id) = path.into_inner();
     let payload = req.into_inner();
 
-    api::server_wrap(NoAuth, &http_req, state, |state, _auth| async move {
-        core::transformation::execute_transformation(
-            state,
-            ingestion_id,
-            ingestion_history_id,
-            payload,
-        )
-        .await
-    })
+    api::server_wrap(
+        InternalApiKeyAuth,
+        &http_req,
+        state,
+        |state, _auth| async move {
+            core::transformation::execute_transformation(
+                state,
+                ingestion_id,
+                ingestion_history_id,
+                payload,
+            )
+            .await
+        },
+    )
     .await
 }
 
@@ -71,7 +78,7 @@ pub async fn execute_transformation(
     ),
     responses(
         (status = 200, description = "Transformation history with config retrieved successfully", body = TransformationHistoryResponse),
-        (status = 404, description = "Transformation history not found"),
+        (status = 404, description = "Transformation history not found - does not exist or does not belong to authenticated user's profile"),
         (status = 500, description = "Internal server error")
     ),
     tag = "Transformations",
@@ -89,10 +96,11 @@ pub async fn find_transformation_history_with_config_by_id(
         JwtAuth::basic(Permission::ProfileReconTransformationRead),
         &http_req,
         state,
-        |state, _auth| async move {
+        |state, auth| async move {
             core::transformation::find_transformation_history_with_config_by_id(
                 &state,
                 &transformation_history_id,
+                &auth.profile_id,
             )
             .await
         },

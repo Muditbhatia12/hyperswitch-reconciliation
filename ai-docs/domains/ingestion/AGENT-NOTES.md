@@ -109,7 +109,8 @@ Ingestion service handles automated file retrieval from external sources (primar
 
 - File storage uses external_services interface - supports S3 and filesystem
 - No direct database access patterns - all operations go through store layer
-- JWT auth for CRUD operations, NoAuth for trigger endpoint
+<!-- AI-UPDATED: 2026-10-05 - Trigger auth is done by the ingestion context -->
+- JWT auth for CRUD operations. The trigger route is `NoAuth` at the route; each ingestion context authenticates in `parse_payload` (see Trigger Auth below)
 
 <!-- AI-UPDATED: 2025-07-21 - Transformation service integration implemented -->
 
@@ -163,6 +164,18 @@ Ingestion service handles automated file retrieval from external sources (primar
 - New endpoint pattern: `/ingestions/history/{history_id}` returns both config and history data
   - Uses `IngestionConfigHistoryView` for efficient joined queries
   - Single database call replaces multiple separate queries
+
+<!-- AI-UPDATED: 2026-09-21 - Cross-tenant IDOR fix on GET /ingestions/history/{id} -->
+
+- **Profile scoping lives in the query, not the handler**: `find_config_and_history_by_id_and_profile`
+  filters on both `dsl::id` and `dsl::profile_id`
+  - There is deliberately **no** unscoped `find_config_and_history_by_id` variant left — an unscoped
+    point lookup on this view is never safe to hand back to a caller, and removing it makes omitting
+    the profile a compile error instead of a cross-tenant disclosure
+  - `JwtAuth::basic(Permission::…)` is class-level only; it never sees the `{id}`, so it cannot be
+    relied on for object-level authorization
+  - Wrong profile → same `IngestionHistoryNotFound` 404 as a missing row, never 403 (a 403 turns the
+    endpoint into an oracle for enumerating other tenants' record IDs)
 - API response evolution: `IngestionConfigResponse` structure changed significantly
   - Removed: `profile_id`, `account_id`, direct `config` field exposure
   - Added: `ingestion_id`, `last_synced_at`, typed `data` field with connection details
@@ -220,6 +233,7 @@ Ingestion service handles automated file retrieval from external sources (primar
   - Accessed via `state.ingestion.sftp_file_storage` instead of `state.file_storage`
 - **Trigger Behavior**:
   - Can be triggered via webhook endpoint like other ingestion types
+  - **Requires `x-internal-api-key`** (shared `auth.internal_api_key`). Intended caller: an internal cron job
   - Manual upload not supported - returns `ManualUploadNotSupported` error
   - Uses `TriggerDataV1::SftpInternal` and `RawPayloadV1::SftpInternal` variants
 - **File Download Flow**:
@@ -291,3 +305,15 @@ Ingestion service handles automated file retrieval from external sources (primar
   - Current version: `v1:` prefix with base64-encoded encrypted data
   - Diesel integration allows transparent database operations
   - Failed encryption operations surface as validation errors, not system panics
+
+## Trigger Auth (`POST /ingestions/{id}/trigger`)
+
+<!-- AI-UPDATED: 2026-10-05 - SFTP triggers require the internal API key -->
+
+- **Route is `NoAuth`**: the config type is only known after the lookup, and Adyen cannot send `x-internal-api-key`. Do not switch the route to `InternalApiKeyAuth`; it would break Adyen
+- Each ingestion context authenticates in `parse_payload`. There is no per-config match in core
+- `SftpInternalIngestionContext` carries the request `headers` and the expected key (`Secret`, since the context derives `Debug`). `authenticate_sftp_internal` (`pub`) compares the `x-internal-api-key` header with it inline. The same comparison is repeated in `InternalApiKeyAuth::validate`, so keep the two in sync. Both reject an empty configured key
+- A bad or missing key is `ParseStageError::InvalidAuthentication` → 400, same as Adyen. The `Pending → Failed` history row is written on purpose so the failure is visible to the client in history
+- **Gotcha**: because auth runs after `insert_ingestion_history`, an anonymous caller who knows an `ingestion_id` can write `Failed` history rows for that config. A pre-insert authentication step would close this for SFTP and Adyen together
+- `Manual` configs fail at context creation with `WebhookNotSupported`
+- **Tests**: `.with_internal_key()` must come before `.json()` on the test `RequestBuilder`, which copies headers when `.json()` is called
