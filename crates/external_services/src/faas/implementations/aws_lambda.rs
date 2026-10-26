@@ -12,7 +12,7 @@ use aws_sdk_lambda::{
     Client as LambdaClient,
 };
 use error_stack::{Result, ResultExt};
-use hyper::StatusCode;
+use reqwest::StatusCode;
 
 use crate::faas::{
     config::AwsLambdaConfig,

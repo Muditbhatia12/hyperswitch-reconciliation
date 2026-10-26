@@ -2,8 +2,8 @@ use std::time::Duration;
 
 use async_trait::async_trait;
 use common_utils::id_type::MerchantId;
-use hyper::{HeaderMap, Method};
 use masking::Secret;
+use reqwest::{header::HeaderMap, Method};
 
 use crate::{
     hyperswitch::{

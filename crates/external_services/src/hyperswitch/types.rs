@@ -3,11 +3,9 @@ use common_utils::{
     id_type::MerchantId,
 };
 use error_stack::{Report, ResultExt};
-use hyper::{
-    body::Bytes,
-    header::{HeaderName, HeaderValue},
-};
+use hyper::body::Bytes;
 use masking::{PeekInterface, Secret};
+use reqwest::header::{HeaderName, HeaderValue};
 
 use crate::user::types::error::UserClientError;
 

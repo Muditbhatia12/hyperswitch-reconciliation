@@ -19,6 +19,9 @@
 - Always validate file storage config before creating clients
 
 ## Common Gotchas
+<!-- AI-UPDATED: 2026-10-26 - Reqwest HTTP/TLS types and keymanager call sites -->
+- **Two HTTP type versions**: Reqwest 0.13 uses `http` 1.x, while Actix uses `http` 0.2. Use Reqwest methods/headers/status types throughout outbound keymanager calls to avoid conversions; leave server-side HTTP types unchanged.
+- **Reqwest feature names changed**: use `rustls` and `native-tls-no-alpn`; URL-encoded forms and query builders now need explicit `form`/`query` features. Keep Hyper 1.x in sync with Reqwest so incomplete-message error downcasts still detect retryable closed connections.
 <!-- AI-UPDATED: 2026-10-10 - OCI KMS rollout needs ciphertext migration and OKE identity -->
 - **Ciphertext migration**: Re-encrypt all secured config values before switching between AWS and OCI KMS. `prod.toml` keeps AWS as the default.
 - **OCI credentials**: Local runs use the OCI CLI profile; pods use OKE workload identity. Verify pod access separately with an enhanced cluster, service-account token/CA, and Vault key permissions.

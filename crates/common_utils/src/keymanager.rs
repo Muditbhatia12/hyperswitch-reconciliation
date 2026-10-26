@@ -5,9 +5,12 @@ use std::str::FromStr;
 
 use base64::Engine;
 use error_stack::ResultExt;
-use http::{HeaderMap, HeaderName, HeaderValue, Method, StatusCode};
 use masking::{PeekInterface, StrongSecret};
 use once_cell::sync::OnceCell;
+use reqwest::{
+    header::{HeaderMap, HeaderName, HeaderValue},
+    Method, StatusCode,
+};
 use tracing::{self, instrument};
 
 use crate::{
