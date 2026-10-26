@@ -17,6 +17,7 @@ pub mod search_group;
 pub mod staging_entry;
 pub mod transaction;
 pub mod transformation;
+mod utils;
 
 use diesel::PgConnection;
 use diesel_models::{errors::DatabaseError, StorageResult};

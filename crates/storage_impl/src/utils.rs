@@ -7,7 +7,7 @@ use diesel_models::{
 };
 use futures::future;
 
-pub async fn update_search_duplicates_for_entries(
+pub(crate) async fn update_search_duplicates_for_entries(
     conn: &PgPooledConn,
     entries: &[Entry],
     update: &SearchDuplicateUpdate,

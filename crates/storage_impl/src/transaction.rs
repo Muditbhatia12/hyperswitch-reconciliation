@@ -27,7 +27,7 @@ use error_stack::ResultExt;
 use futures::future;
 use time::PrimitiveDateTime;
 
-use crate::utils::search_duplicate::update_search_duplicates_for_entries;
+use crate::utils::update_search_duplicates_for_entries;
 
 use super::Store;
 
